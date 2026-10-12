@@ -30,14 +30,10 @@ function daysUntil(v){if(!v)return null;const d=new Date(v);if(Number.isNaN(d.ge
 function statusBadge(s){return `<span class="status ${statusClass(s)}">${esc(s||'Other')}</span>`}
 function actionButton(action,id,title,iconName){return `<button class="action-btn" data-action="${action}" data-id="${esc(id)}" title="${esc(title)}">${icon(iconName)}</button>`}
 
-async function verifyBackend(){
-  if(!CESApi.isConfigured())throw new Error('Backend URL missing in config.js');
-  try{return await CESApi.call('ping')}catch(_){return {ok:true,methods:[]}}
-}
 async function boot(){
   bindEvents();$('signInBtn').disabled=false;
-  $('backendStatus').textContent=CESApi.isConfigured()?'Staff ID only • no PIN':'Backend URL missing in config.js';
-  if(!CESApi.isConfigured())return;
+  if(!CESApi.isConfigured()){$('backendStatus').textContent='Backend URL missing in config.js';return;}
+  $('backendStatus').textContent='Staff ID only • no PIN';
   const tok=sessionStorage.getItem('ces_token');if(!tok)return;
   try{S.token=tok;showLoading(true);await loadBootstrap(true);showApp();await loadDashboard();startAutoSync()}
   catch(e){sessionStorage.removeItem('ces_token');S.token=null;console.warn(errMsg(e))}
@@ -60,20 +56,7 @@ function bindEvents(){
   $('settingsRefreshBtn').onclick=loadSettings;$('localSyncSec').addEventListener('change',()=>{localStorage.setItem('ces_sync_sec',$('localSyncSec').value);startAutoSync();toast('Live sync interval updated')});$('saveSettingsBtn').onclick=saveSettings;$('saveAlertSettingsBtn').onclick=saveSettings;$('readinessBtn').onclick=viewReadiness;$('rebuildBtn').onclick=rebuildData;$('notifyConfigBody').addEventListener('click',notificationConfigAction);$('notifyForm').addEventListener('submit',saveNotificationConfig);$('testNotifyBtn').onclick=testNotification;$('runNotifyNowBtn').onclick=runNotificationNow;
   window.addEventListener('focus',()=>{if(S.token)checkSync(true)});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.token)checkSync(true)});window.addEventListener('online',()=>{if(S.token)checkSync(true)});
 }
-async function login(e){
-  e.preventDefault();$('loginError').classList.add('hidden');
-  const staffId=$('staffId').value.trim();if(!staffId)return;
-  try{
-    $('signInBtn').disabled=true;$('signInBtn').textContent='Signing in…';
-    const r=await CESApi.call('login',{staffId});
-    S.token=r.token;S.profile=r.profile;sessionStorage.setItem('ces_token',S.token);
-    if(r.bootstrap){S.bootstrap=r.bootstrap;S.profile=r.bootstrap.profile||r.profile;S.dataVersion=String(r.bootstrap.dataVersion||'0');populateFilters();updateProfileUi();$('userNav').classList.toggle('hidden',!S.profile.canManageAccess);$('openDriveTopBtn').href=window.CES_CONFIG.contractDriveUrl;$('openDriveBtn').href=window.CES_CONFIG.contractDriveUrl;}
-    showApp();showLoading(true);
-    if(!S.bootstrap)await loadBootstrap(false);
-    await loadDashboard();startAutoSync();toast('Sign in successful');
-  }catch(err){$('loginError').textContent=errMsg(err);$('loginError').classList.remove('hidden')}
-  finally{$('signInBtn').disabled=false;$('signInBtn').textContent='Sign in';showLoading(false)}
-}
+async function login(e){e.preventDefault();$('loginError').classList.add('hidden');const staffId=$('staffId').value.trim();if(!staffId)return;try{$('signInBtn').disabled=true;$('signInBtn').textContent='Signing in…';const r=await CESApi.call('login',{staffId});S.token=r.token;S.profile=r.profile;sessionStorage.setItem('ces_token',S.token);showApp();showLoading(true);await loadBootstrap(false);await loadDashboard();startAutoSync();toast('Sign in successful')}catch(err){let m=errMsg(err);if(/did not respond|Cannot connect/i.test(m))m='Cannot reach Apps Script Web App. Open the /exec URL once, confirm Web App access, then Deploy > New version.';$('loginError').textContent=m;$('loginError').classList.remove('hidden')}finally{$('signInBtn').disabled=false;$('signInBtn').textContent='Sign in';showLoading(false)}}
 function showApp(){$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');if(localStorage.getItem('ces_sidebar')==='hidden'&&innerWidth>860)$('sidebar').classList.add('hidden-nav')}
 async function logout(){try{if(S.token)await CESApi.call('logout',S.token)}catch(_){}clearInterval(S.syncTimer);sessionStorage.removeItem('ces_token');location.reload()}
 function toggleSidebar(){const sb=$('sidebar');if(innerWidth<=860){sb.classList.toggle('mobile-open');return}const h=sb.classList.toggle('hidden-nav');localStorage.setItem('ces_sidebar',h?'hidden':'open')}
@@ -149,16 +132,6 @@ function switchPage(page){if(page==='users'&&!S.profile.canManageAccess)return;S
 async function refreshAll(){showLoading(true);try{await loadBootstrap(true);await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();toast('Data synchronized')}catch(e){handleApiError(e)}finally{showLoading(false)}}
 function getSyncSec(){const n=Number(localStorage.getItem('ces_sync_sec')||S.bootstrap?.defaults?.autoSyncSec||5);return[5,10,15,30,60,120].includes(n)?n:5}
 function startAutoSync(){clearInterval(S.syncTimer);const sec=getSyncSec();setSyncState('Live sync',`Every ${sec} sec`,'green');S.syncTimer=setInterval(()=>{if(!document.hidden)checkSync(false)},sec*1000)}
-async function checkSync(force){
-  if(!S.token)return;setSyncState('Checking…','Google Sheet','orange');
-  try{
-    let r;
-    try{r=await CESApi.call('syncStatus',S.token,S.dataVersion)}
-    catch(e){if(/RPC method not allowed/i.test(errMsg(e))){const b=await CESApi.call('bootstrap',S.token);r={changed:String(b.dataVersion)!==String(S.dataVersion),dataVersion:b.dataVersion,profile:b.profile,_bootstrap:b};}else throw e;}
-    S.profile=r.profile||S.profile;updateProfileUi();$('userNav').classList.toggle('hidden',!S.profile.canManageAccess);
-    if(r.changed){if(r._bootstrap){S.bootstrap=r._bootstrap;S.dataVersion=String(r.dataVersion);populateFilters();}else{S.dataVersion=String(r.dataVersion);await loadBootstrap(true);}await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();if(force)toast('Sheet synchronized');}
-    setSyncState('Live sync',`Every ${getSyncSec()} sec`,'green');
-  }catch(e){const m=errMsg(e);setSyncState('Sync issue','Click sync','red');if(force)toast(m);console.warn('CES sync error',m)}
-}
-function handleApiError(e){let msg=errMsg(e);if(/session/i.test(msg)){sessionStorage.removeItem('ces_token');alert(msg);location.reload();return}toast(msg)}
+async function checkSync(force){if(!S.token)return;setSyncState('Checking…','Google Sheet','orange');try{const r=await CESApi.call('syncStatus',S.token,S.dataVersion);S.profile=r.profile||S.profile;updateProfileUi();$('userNav').classList.toggle('hidden',!S.profile.canManageAccess);if(r.changed){S.dataVersion=String(r.dataVersion);await loadBootstrap(true);await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();toast('Sheet changed • synchronized')}setSyncState('Live sync',`Every ${getSyncSec()} sec`,'green')}catch(e){const m=errMsg(e);setSyncState('Sync issue','Click sync','red');if(force)toast(m);console.warn('CES sync error',m)}}
+function handleApiError(e){let msg=errMsg(e);if(/RPC method not allowed/i.test(msg))msg='Apps Script backend is older than the GitHub front end. Deploy the latest Apps Script code as a NEW VERSION, then refresh this page.';if(/session/i.test(msg)){sessionStorage.removeItem('ces_token');alert(msg);location.reload();return}toast(msg)}
 boot();
