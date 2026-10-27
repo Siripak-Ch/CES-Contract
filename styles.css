@@ -274,3 +274,31 @@ tr:hover td{background:#f8fbff}
 @media print{.login-hero,.hero-footer{display:none}.chart-note{border:0}.chart-wrap{break-inside:avoid}}
 
 .connection-tools{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;margin-top:9px}.connection-tools .login-status{margin:0;text-align:left;font-size:9.5px}.connect-retry{border:0;background:transparent;color:#1461b9;font-size:10px;min-height:24px;padding:3px 6px;text-decoration:underline;text-underline-offset:3px}.connect-retry:hover{color:#0c3f80}
+
+/* V33: more legible dense analytical layout */
+.chart-controls{display:flex;align-items:center;gap:12px;padding:10px 14px;margin:4px 0 12px;flex-wrap:wrap;background:#fafdff;border:1px solid #d7e5f1;box-shadow:none}
+.chart-controls .chart-scope{font-size:11px;color:#37536f;font-weight:600;flex:1;line-height:1.65}
+.chart-controls label{font-size:10.5px;color:#516982;font-weight:700;white-space:nowrap}
+.chart-controls select{min-height:34px;width:195px;font-size:11px;padding:6px 8px;background:#fff;border-color:#c8d9ea}
+.chart-card{background:#fff;border:1px solid #dde7f2}
+.chart-card .card-head h3,.card-head h3{color:#183956;font-size:13px}
+.card-head p,.chart-note{font-size:10.5px;line-height:1.6}
+.chart-wrap{height:330px}.chart-wrap.tall{height:330px}.chart-wrap.small{height:215px}
+.rank-list{padding:0 12px 14px;display:block}
+.vendor-comparison-header,.vendor-comparison-row{display:grid;grid-template-columns:minmax(96px,1.7fr) minmax(68px,1fr) minmax(68px,1fr) minmax(58px,.75fr);gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid #edf1f6;font-size:10.5px}
+.vendor-comparison-header{color:#60748c;font-weight:700;background:#f7fafe;border-radius:6px}
+.vendor-comparison-row button{border:0;background:transparent;color:#175dae;cursor:pointer;text-align:left;padding:0;font:inherit;font-weight:700}
+.vendor-comparison-row button:hover{text-decoration:underline}
+.vendor-comparison-row span,.vendor-comparison-row strong{font-variant-numeric:tabular-nums;text-align:right}
+.annual-analysis{margin:4px 0 13px;border:1px solid #dbe6f1;border-radius:12px;background:#fff;overflow:hidden}
+.annual-analysis>summary{padding:13px 16px;color:#1a456c;font-weight:700;font-size:12px;cursor:pointer;display:flex;justify-content:space-between;list-style:none}
+.annual-analysis>summary::after{content:'＋';color:#135caf;font-size:17px}
+.annual-analysis[open]>summary::after{content:'−'}
+.annual-analysis>summary span{font-size:10px;font-weight:400;color:#75869c;margin-left:auto;margin-right:10px}
+.annual-analysis .yoy-panel{border:0;border-top:1px solid #e9eff5;margin:0;padding:0 15px 16px;box-shadow:none}
+.user-load-message{border:1px solid #dae9f3;background:#f2f8fd;color:#315d80;font-size:11px;border-radius:8px;padding:9px 13px;margin:9px 0 12px}
+.user-load-message.warning{border-color:#e9c991;background:#fff9ec;color:#8c5e1e}
+.user-load-error{text-align:center;padding:22px!important;color:#86451c}
+.user-load-error p{font-size:11px;margin:8px 0}
+.status.st-nonrenew{background:#f3ecfb;color:#7644ae}.status.st-renewal{background:#eaf2ff;color:#205fa8}.status.st-added{background:#e2faf7;color:#007e88}.status.st-replace{background:#fff0e3;color:#a55b16}
+@media(max-width:760px){.chart-controls{flex-direction:column;align-items:stretch}.chart-controls select{width:100%}.chart-wrap{height:310px}.vendor-comparison-row{font-size:10px}}

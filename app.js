@@ -50,7 +50,7 @@ function errMsg(e){return(e&&e.message)||String(e)}
 function showLoginConnectionError(message){const area=$('loginError');area.textContent=message;area.classList.remove('hidden');}
 async function testBackendConnection(){const btn=$('testBackendBtn');btn.disabled=true;$('backendStatus').textContent='Testing connection…';try{const r=await CESApi.call('health');$('backendStatus').textContent='Connected • '+(r.version||'Backend ready');$('loginError').classList.add('hidden');}catch(e){const m=errMsg(e);$('backendStatus').textContent='Connection check failed';showLoginConnectionError(/RPC method not allowed/.test(m)?'Backend is reachable but not updated to V32. Redeploy Apps Script as a new version.':m);}finally{btn.disabled=false;}}
 function clearSessionOnExpiry(reason){clearInterval(S.syncTimer);S.token=null;S.profile=null;sessionStorage.removeItem('ces_token');$('appView')?.classList.add('hidden');$('loginView')?.classList.remove('hidden');showLoginConnectionError(reason||'Session expired. Please sign in again.');setSyncState('Signed out','Session ended','red');}
-function statusClass(s){s=String(s||'').toLowerCase();return s==='active'?'st-active':s==='defective'?'st-defective':s==='decommission'?'st-decommission':s==='warranty'?'st-warranty':'st-other'}
+function statusClass(s){const x=String(s||'').toLowerCase();return {'active':'st-active','decom':'st-decommission','non-renew':'st-nonrenew','renewal':'st-renewal','added':'st-added','in warranty':'st-warranty','defect':'st-defective','replace':'st-replace','unclassified':'st-other'}[x]||'st-other'}
 function deltaClass(v){return v===null||v===undefined?'flat':Number(v)>0?'up':Number(v)<0?'down':'flat'}
 function initialOf(name){const x=String(name||'U').trim();return x?x.charAt(0).toUpperCase():'U'}
 function setSyncState(text,sub,state='orange'){ $('syncLabel').textContent=text;$('syncSub').textContent=sub||'';$('syncDot').className='sync-dot status-'+state;const dot=$('liveStatusPill').querySelector('.status-dot');dot.className='status-dot '+(state==='green'?'green':state==='red'?'red':'orange');$('liveStatusPill').querySelector('span:last-child').textContent=state==='green'?'LIVE':state==='red'?'SYNC ERROR':'CHECKING'; }
@@ -93,6 +93,7 @@ function bindEvents(){
   document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).classList.add('hidden'));document.querySelectorAll('.modal-backdrop').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.add('hidden')}));
   $('editYear').addEventListener('change',syncEditPrice);$('editForm').addEventListener('submit',saveEdit);
   ['contractSite','contractVendor','contractHospital','contractGroup','contractMaType','contractEquipment','contractStatus','contractExpiry','contractYear'].forEach(id=>$(id).addEventListener('change',()=>{S.contractPage=1;loadSiteContracts()}));let contractSearchTimer;$('contractSearch').addEventListener('input',()=>{clearTimeout(contractSearchTimer);contractSearchTimer=setTimeout(()=>{S.contractPage=1;loadSiteContracts()},220)});$('contractResetBtn').onclick=()=>{['contractSite','contractVendor','contractHospital','contractGroup','contractMaType','contractEquipment','contractStatus','contractExpiry'].forEach(id=>$(id).value='');$('contractSearch').value='';S.contractPage=1;loadSiteContracts()};$('contractPrev').onclick=()=>{if(S.contractPage>1){S.contractPage--;loadSiteContracts()}};$('contractNext').onclick=()=>{if(S.contractMeta&&S.contractPage<(S.contractMeta.pageCount||1)){S.contractPage++;loadSiteContracts()}};$('contractBody').addEventListener('click',contractAction);$('uploadTopBtn').onclick=()=>openUpload();$('uploadForm').addEventListener('submit',startUpload);window.addEventListener('message',e=>{if(e.data&&e.data.type==='CES_CONTRACT_UPLOAD_COMPLETE'){toast('Contract file uploaded');loadSiteContracts();}});
+  $('chartSort').addEventListener('change',()=>{if(S.data){renderCharts();renderVendorMovement();}});document.querySelector('.annual-analysis')?.addEventListener('toggle',()=>S.charts.yoy?.resize());
   $('addStaffBtn').onclick=()=>openUserModal();$('reloadStaffBtn').onclick=loadUsers;$('staffSearch').addEventListener('input',()=>{S.staffPage=1;renderUsers()});['staffSiteFilter','staffGroupFilter','staffRoleFilter','staffStatusFilter','staffEditFilter','staffScopeFilter'].forEach(id=>$(id).addEventListener('change',()=>{S.staffPage=1;renderUsers()}));$('staffPrev').onclick=()=>{if(S.staffPage>1){S.staffPage--;renderUsers()}};$('staffNext').onclick=()=>{S.staffPage++;renderUsers()};$('staffBody').addEventListener('click',e=>{const b=e.target.closest('[data-user]');if(b)openUserModal(b.dataset.user)});$('staffForm').addEventListener('submit',saveUser);$('userExportBtn').onclick=exportUsers;$('aViewAll').addEventListener('change',toggleUserSiteChoices);$('equipPrev').onclick=()=>{if(S.equipmentPage>1){S.equipmentPage--;loadDashboardSafe()}};$('equipNext').onclick=()=>{if(S.data&&S.equipmentPage<(S.data.pageCount||1)){S.equipmentPage++;loadDashboardSafe()}};
   $('settingsRefreshBtn').onclick=loadSettings;$('localSyncSec').addEventListener('change',()=>{localStorage.setItem('ces_sync_sec',$('localSyncSec').value);startAutoSync();toast('Live sync interval updated')});$('saveSettingsBtn').onclick=saveSettings;$('saveAlertSettingsBtn').onclick=saveSettings;$('readinessBtn').onclick=viewReadiness;$('rebuildBtn').onclick=rebuildData;$('notifyConfigBody').addEventListener('click',notificationConfigAction);$('notifyForm').addEventListener('submit',saveNotificationConfig);$('testNotifyBtn').onclick=testNotification;$('runNotifyNowBtn').onclick=runNotificationNow;if($('runRenewalNowBtn'))$('runRenewalNowBtn').onclick=sendRenewalEmailNow;
   window.addEventListener('focus',()=>{if(S.token)checkSync(true)});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.token)checkSync(true)});window.addEventListener('online',()=>{if(S.token)checkSync(true)});
@@ -132,7 +133,8 @@ function fmtCompactBaht(v){
   const n=Number(v);if(!Number.isFinite(n))return '—';
   const a=Math.abs(n);return '฿'+(a>=1e9?(n/1e9).toLocaleString('en-US',{maximumFractionDigits:2})+'B':a>=1e6?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:1})+'M':a>=1e3?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:0})+'K':n.toLocaleString('en-US',{maximumFractionDigits:0}));
 }
-const CHART_STATUS_COLORS={'Active':'#138b76','Defective':'#e15957','Warranty':'#f4ae45','Decommission':'#7a889b','Non-Renewal':'#8e6bd1','Plan to Replace':'#3279c8','EOS/EOL':'#c17e2d','Other':'#c5cfda'};
+const CHART_STATUS_COLORS={'Active':'#13A27B','Decom':'#7A8699','Non-renew':'#8559B9','Renewal':'#3276D2','Added':'#17A6B6','In Warranty':'#E9AA3E','Defect':'#DD5966','Replace':'#D4793A','Unclassified':'#CBD5E1'};
+const STATUS_ORDER=['Active','Decom','Non-renew','Renewal','Added','In Warranty','Defect','Replace','Unclassified'];
 function chartOptions(legend=true,type='money',direction='vertical'){
   const moneyChart=type==='money', horizontal=direction==='horizontal';
   const axis={grid:{color:'#e9edf4',drawTicks:false},border:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b',padding:9,maxRotation:0,autoSkip:true}};
@@ -143,55 +145,68 @@ function chartOptions(legend=true,type='money',direction='vertical'){
       {x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:moneyChart,ticks:{...axis.ticks,callback:v=>moneyChart?fmtCompactBaht(v):new Intl.NumberFormat('en-US').format(v)}}}
   };
 }
+function chartScopeSummary(){
+  const f=getFilterState(),keys=[['site','Site'],['vendor','Vendor'],['hospital','Hospital'],['group','Group'],['equipmentType','Type'],['status','Status']];
+  const selections=keys.filter(([key])=>f[key]).map(([key,label])=>`${label}: ${f[key]}`);
+  $('chartScope').textContent=`Filtered: ${(S.data?.totalRows||0).toLocaleString()} equipment · ${selections.join(' · ')||'All permitted sites & vendors'} · ${S.data?.compareYear||'—'} vs ${S.data?.year||'—'}`;
+}
+function sortChartItems(items,key,changeKey){
+  const sort=$('chartSort')?.value||'value-desc', arr=(items||[]).slice();
+  if(sort==='alpha')return arr.sort((a,b)=>String(a.vendor||a.site||a.type||'').localeCompare(String(b.vendor||b.site||b.type||'')));
+  if(sort==='change-desc' && changeKey)return arr.sort((a,b)=>(b[changeKey]??-Infinity)-(a[changeKey]??-Infinity));
+  return arr.sort(sort==='value-asc'?(a,b)=>(Number(a[key])||0)-(Number(b[key])||0):(a,b)=>(Number(b[key])||0)-(Number(a[key])||0));
+}
 function renderCharts(){
-  const d=S.data||{},years=S.bootstrap?.years||[];
-  Object.values(S.charts).forEach(c=>{if(c&&typeof c.destroy==='function')c.destroy();});
-  Object.keys(S.charts).forEach(k=>S.charts[k]=null);
+  const d=S.data||{},year=d.year,compareYear=d.compareYear;chartScopeSummary();
+  Object.values(S.charts).forEach(c=>{if(c&&typeof c.destroy==='function')c.destroy()});Object.keys(S.charts).forEach(k=>S.charts[k]=null);
   if(typeof Chart==='undefined'){
-    ['trendChart','siteChart','yoyChart','statusChart','equipmentTypeChart'].forEach(id=>chartDataEmpty(id,'Unable to load chart library. Check CDN access or refresh the page.'));
-    return;
+    ['trendChart','siteChart','yoyChart','statusChart','equipmentTypeChart'].forEach(id=>chartDataEmpty(id,'Chart library not available. Reload the page or check the network.'));return;
   }
   Chart.defaults.font.family='Prompt';Chart.defaults.color='#566983';
-  const trend=(d.trend||[]).slice().sort((a,b)=>(Number(b.byYear?.[d.year])||0)-(Number(a.byYear?.[d.year])||0));
-  chartDataEmpty('trendChart',!trend.length?'No vendor price data for these filters.':'');
-  $('trendMeta').textContent=`${trend.length} vendors • ${years[0]||'—'}–${years[years.length-1]||'—'} • Annual sum of available priced equipment (THB)`;
-  if(trend.length){
-    S.charts.trend=new Chart($('trendChart'),{type:'line',data:{labels:years,datasets:trend.map((v,i)=>({label:v.vendor,data:years.map(y=>v.byYear?.[y]??null),borderColor:vendorColor(v.vendor,i),backgroundColor:vendorColor(v.vendor,i),tension:.2,spanGaps:false,pointRadius:2,pointHoverRadius:5,borderWidth:2}))},options:chartOptions(true)});
+  // All chart datasets are generated by apiDashboard_ after applying the same equipment filters.
+  const vendors=sortChartItems(d.vendorComparison||[],'currentValue','deltaPct');
+  chartDataEmpty('trendChart',!vendors.length?'No vendor data matches the selected filters.':'');
+  $('trendMeta').textContent=`${vendors.length} vendors · ${compareYear} vs ${year} · same ${vendors.reduce((n,v)=>n+(v.records||0),0).toLocaleString()} paired assets · THB (not individual equipment price)`;
+  if(vendors.length){
+    const opt=chartOptions(true,'money','horizontal');opt.scales.y.ticks.autoSkip=false;opt.plugins.tooltip.callbacks.label=c=>`${c.dataset.label}: ${money(c.parsed.x)}`;
+    opt.plugins.tooltip.callbacks.afterBody=items=>{const v=vendors[items[0]?.dataIndex];return v?`Change: ${pct(v.deltaPct)} · ${num(v.records)} matched equipment`:''};
+    S.charts.trend=new Chart($('trendChart'),{type:'bar',data:{labels:vendors.map(v=>v.vendor),datasets:[{label:`Compare ${compareYear}`,data:vendors.map(v=>v.compareValue),backgroundColor:'#9DC0E4',borderRadius:3,maxBarThickness:14},{label:`Current ${year}`,data:vendors.map(v=>v.currentValue),backgroundColor:'#1465B9',borderRadius:3,maxBarThickness:14}]},options:opt});
   }
-  const siteValues=(d.siteValues||[]).slice().sort((a,b)=>b.value-a.value),mainSites=siteValues.slice(0,10),remaining=siteValues.slice(10),otherValue=remaining.reduce((s,x)=>s+(Number(x.value)||0),0);
-  const sites=mainSites.concat(remaining.length?[{site:`Other ${remaining.length} sites`,value:otherValue}]:[]);
-  $('siteMeta').textContent=`${siteValues.length} sites • ${d.year} values • Top ${mainSites.length}${remaining.length?' + other sites':''} • THB`;
-  chartDataEmpty('siteChart',!sites.length?'No site-level price data for these filters.':'');
-  if(sites.length){
-    S.charts.site=new Chart($('siteChart'),{type:'bar',data:{labels:sites.map(x=>x.site),datasets:[{label:`Contract value ${d.year}`,data:sites.map(x=>Number(x.value)||0),backgroundColor:sites.map((_,i)=>i===sites.length-1&&remaining.length?'#aabbd1':i===0?'#145db7':'#7da9e2'),borderRadius:5,barPercentage:.76}]},options:{...chartOptions(false,'money','horizontal'),plugins:{...chartOptions(false,'money','horizontal').plugins,tooltip:{callbacks:{label:c=>`Contract value: ${money(c.parsed.x)}`,afterLabel:c=>remaining.length&&c.dataIndex===sites.length-1?`${remaining.length} additional sites`:''}}}}});
+  const sites=sortChartItems(d.siteValues||[],'value'),main=sites.slice(0,10),remaining=sites.slice(10),otherValue=remaining.reduce((a,x)=>a+(Number(x.value)||0),0),shown=main.concat(remaining.length?[{site:`Other ${remaining.length} sites`,value:otherValue}]:[]);
+  $('siteMeta').textContent=`${sites.length} sites · ${year} · ${main.length} shown${remaining.length?' + combined other':''} · THB`;
+  chartDataEmpty('siteChart',!shown.length?'No sites match the selected filters.':'');
+  if(shown.length){
+    const opt=chartOptions(false,'money','horizontal');opt.scales.y.ticks.autoSkip=false;opt.plugins.tooltip.callbacks.label=c=>`Annual value: ${money(c.parsed.x)}`;
+    S.charts.site=new Chart($('siteChart'),{type:'bar',data:{labels:shown.map(x=>x.site),datasets:[{label:`Value ${year}`,data:shown.map(x=>x.value),backgroundColor:shown.map((_,i)=>i===shown.length-1&&remaining.length?'#AEC0D1':'#3990CA'),borderRadius:4,maxBarThickness:20}]},options:opt});
   }
-  const yearly=(d.yearlyYoy||[]).slice();
-  chartDataEmpty('yoyChart',!yearly.some(x=>x.changePct!==null)?'No year-pair prices with a positive prior-year baseline.':'');
-  $('yoyMeta').textContent='(Current − previous) ÷ previous • matched equipment only • 0 previous-year prices excluded';
-  if(yearly.some(x=>x.changePct!==null)){
-    S.charts.yoy=new Chart($('yoyChart'),{type:'bar',data:{labels:yearly.map(x=>`${x.previousYear} → ${x.year}`),datasets:[{label:'YoY change',data:yearly.map(x=>x.changePct==null?null:x.changePct*100),backgroundColor:yearly.map(x=>x.changePct==null?'#cbd5e1':x.changePct>0?'#db575c':x.changePct<0?'#0c9b77':'#7fa3cc'),borderRadius:5,maxBarThickness:45}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'#132a48',padding:12,callbacks:{title:items=>items[0]?.label||'',label:c=>c.raw===null?'No comparable data':`Change: ${Number(c.raw).toFixed(2)}%`,afterLabel:c=>{const x=yearly[c.dataIndex];return [`Matched equipment: ${Number(x?.records||0).toLocaleString()}`,`Previous: ${money(x?.previousValue)}`,`Current: ${money(x?.currentValue)}`];}}}},scales:{x:{grid:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b'}},y:{grid:{color:'#e8edf4'},border:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b',callback:v=>v+'%'}}}}});
-  }
-  $('yoyBreakdown').innerHTML=yearly.map(x=>`<div class="annual-stat ${x.year===d.year?'selected-year':''}"><b>${x.previousYear} → ${x.year}</b><span class="delta ${deltaClass(x.changePct)}">${pct(x.changePct)}</span><small>${num(x.records)} matched records</small><small>${fmtCompactBaht(x.previousValue)} → ${fmtCompactBaht(x.currentValue)}</small></div>`).join('')||'<p class="chart-note">No annual paired values available.</p>';
-  const vs=(d.vendorStatusCounts||[]).slice().sort((a,b)=>b.total-a.total),statusNames=uniq_(vs.flatMap(x=>Object.keys(x.statuses||{}))).sort((a,b)=> (a==='Active'?-1:b==='Active'?1:a.localeCompare(b)));
-  $('statusMeta').textContent=`${vs.length} vendors • ${vs.reduce((s,x)=>s+(x.total||0),0).toLocaleString()} equipment • Stacked by actual status`;
-  chartDataEmpty('statusChart',!vs.length?'No equipment status data for these filters.':'');
+  const vs=sortChartItems(d.vendorStatusCounts||[],'total'),statusNames=STATUS_ORDER.filter(s=>vs.some(x=>(x.statuses||{})[s]));
+  $('statusMeta').textContent=`${vs.length} vendors · ${vs.reduce((n,x)=>n+(x.total||0),0).toLocaleString()} assets · ${statusNames.length} status categories · click legend to hide/show`;
+  chartDataEmpty('statusChart',!vs.length?'No equipment statuses for selected filters.':'');
   if(vs.length){
-    const options=chartOptions(true,'count','horizontal');options.indexAxis='y';options.scales.x.stacked=true;options.scales.y.stacked=true;options.plugins.tooltip.callbacks.label=c=>`${c.dataset.label}: ${Number(c.parsed.x||0).toLocaleString()} equipment`;
-    options.plugins.tooltip.callbacks.footer=items=>`Total: ${num(vs[items[0]?.dataIndex]?.total||0)}`;
-    S.charts.status=new Chart($('statusChart'),{type:'bar',data:{labels:vs.map(x=>x.vendor),datasets:statusNames.map((s,i)=>({label:s,data:vs.map(x=>Number((x.statuses||{})[s]||0)),backgroundColor:CHART_STATUS_COLORS[s]||['#768fae','#a98dce','#d6aa63'][i%3],borderRadius:2}))},options});
+    const opt=chartOptions(true,'count','horizontal');opt.scales.x.stacked=true;opt.scales.y.stacked=true;opt.scales.y.ticks.autoSkip=false;
+    opt.plugins.tooltip.callbacks.label=c=>`${c.dataset.label}: ${num(c.parsed.x)} equipment`;
+    opt.plugins.tooltip.callbacks.footer=items=>`Vendor total: ${num(vs[items[0]?.dataIndex]?.total||0)}`;
+    S.charts.status=new Chart($('statusChart'),{type:'bar',data:{labels:vs.map(x=>x.vendor),datasets:statusNames.map(s=>({label:s,data:vs.map(x=>Number((x.statuses||{})[s]||0)),backgroundColor:CHART_STATUS_COLORS[s],borderRadius:2,maxBarThickness:25}))},options:opt});
   }
-  const types=(d.equipmentTypeValues||[]).slice().sort((a,b)=>b.count-a.count);
-  const topTypes=types.slice(0,11),remainingTypes=types.slice(11),otherTypesCount=remainingTypes.reduce((s,x)=>s+(Number(x.count)||0),0);
-  const shownTypes=topTypes.concat(remainingTypes.length?[{type:`Other ${remainingTypes.length} types`,count:otherTypesCount}]:[]);
-  $('typeMeta').textContent=`${types.length} equipment types • ${types.reduce((s,x)=>s+(x.count||0),0).toLocaleString()} equipment • Counts, not prices`;
-  chartDataEmpty('equipmentTypeChart',!shownTypes.length?'No Equipment_Type data. Run CES_SETUP and refresh.':'');
-  if(shownTypes.length){
-    const opt=chartOptions(false,'count','horizontal');opt.indexAxis='y';opt.plugins.tooltip.callbacks.label=c=>`${num(c.parsed.x)} equipment`;
-    S.charts.types=new Chart($('equipmentTypeChart'),{type:'bar',data:{labels:shownTypes.map(x=>x.type),datasets:[{label:'Equipment',data:shownTypes.map(x=>x.count),backgroundColor:shownTypes.map((x,i)=>i===0?'#145db7':i===shownTypes.length-1&&remainingTypes.length?'#9fb2c7':'#67a5be'),borderRadius:4,barPercentage:.72}]},options:opt});
+  const types=sortChartItems(d.equipmentTypeValues||[],'count'),top=types.slice(0,11),rest=types.slice(11),shownTypes=top.concat(rest.length?[{type:`Other ${rest.length} types`,count:rest.reduce((a,x)=>a+(Number(x.count)||0),0)}]:[]);
+  $('typeMeta').textContent=`${types.length} equipment types · ${types.reduce((a,x)=>a+(x.count||0),0).toLocaleString()} assets · filtered counts`;
+  chartDataEmpty('equipmentTypeChart',!shownTypes.length?'No equipment types available for these filters.':'');
+  if(shownTypes.length){const opt=chartOptions(false,'count','horizontal');opt.scales.y.ticks.autoSkip=false;opt.plugins.tooltip.callbacks.label=c=>`${num(c.parsed.x)} equipment`;S.charts.types=new Chart($('equipmentTypeChart'),{type:'bar',data:{labels:shownTypes.map(x=>x.type),datasets:[{label:'Equipment',data:shownTypes.map(x=>x.count),backgroundColor:'#3990CA',borderRadius:3,maxBarThickness:19}]},options:opt});}
+  // Detailed annual changes live in an optional drilldown; KPI above stays visible.
+  const yearly=d.yearlyYoy||[];
+  $('yoyMeta').textContent=`(Current − previous) / previous · matched records only · compare-year zeros excluded`;
+  $('yoyBreakdown').innerHTML=yearly.map(x=>`<div class="annual-stat ${x.year===d.year?'selected-year':''}"><b>${x.previousYear} → ${x.year}</b><span class="delta ${deltaClass(x.changePct)}">${pct(x.changePct)}</span><small>${num(x.records)} matched assets</small><small>${fmtCompactBaht(x.previousValue)} → ${fmtCompactBaht(x.currentValue)}</small></div>`).join('')||'<p class="chart-note">No annual paired values.</p>';
+  const canPlot=yearly.some(x=>x.changePct!=null);chartDataEmpty('yoyChart',!canPlot?'No comparable annual prices.':'');
+  if(canPlot){const opt=chartOptions(false,'count');opt.plugins.legend.display=false;opt.scales.y.ticks.callback=v=>v+'%';opt.plugins.tooltip.callbacks.label=c=>`Change: ${Number(c.raw).toFixed(2)}%`;
+    opt.plugins.tooltip.callbacks.afterLabel=c=>{const x=yearly[c.dataIndex];return [`Matched equipment: ${num(x.records)}`,`Compare: ${money(x.previousValue)}`,`Current: ${money(x.currentValue)}`]};
+    S.charts.yoy=new Chart($('yoyChart'),{type:'bar',data:{labels:yearly.map(x=>`${x.previousYear} → ${x.year}`),datasets:[{label:'Annual change %',data:yearly.map(x=>x.changePct==null?null:x.changePct*100),backgroundColor:yearly.map(x=>x.changePct==null?'#CBD5E1':x.changePct>=0?'#D86971':'#169B80'),borderRadius:5,maxBarThickness:34}]},options:opt});
   }
 }
 
-function renderVendorMovement(){const rows=(S.data.vendorComparison||[]).slice(0,12);$('vendorMovement').innerHTML=rows.map(x=>`<div class="rank-row"><b>${esc(x.vendor)}</b><span class="value">${money(x.currentValue)}</span><span class="delta ${deltaClass(x.deltaPct)}">${pct(x.deltaPct)}</span><button class="action-btn" data-vendor="${esc(x.vendor)}" title="Compare vendor">${icon('compare')}</button></div>`).join('')||'<div class="muted">No comparable vendor data.</div>'}
+function renderVendorMovement(){
+ const rows=sortChartItems(S.data?.vendorComparison||[],'currentValue','deltaPct');
+ $('vendorMovement').innerHTML=`<div class="vendor-comparison-header"><span>Vendor</span><span>${S.data?.compareYear||'Base'}</span><span>${S.data?.year||'Now'}</span><span>Change</span></div>`+rows.map(x=>`<div class="vendor-comparison-row"><button type="button" data-vendor="${esc(x.vendor)}" title="Open vendor detail">${esc(x.vendor)}</button><span>${fmtCompactBaht(x.compareValue)}</span><strong>${fmtCompactBaht(x.currentValue)}</strong><span class="delta ${deltaClass(x.deltaPct)}">${pct(x.deltaPct)}</span></div>`).join('')+(rows.length?'':'<p class="muted">No matched vendor prices for these filters.</p>');
+}
 function renderPriority(){const rows=S.data.priorityActions||[];$('priorityBody').innerHTML=rows.map(x=>`<tr><td><b>${esc(x.site)}</b></td><td>${esc(x.vendor)}</td><td>${esc(x.equipment)}<br><small class="muted">${esc(x.model)}</small></td><td>${esc(x.nhCode)}</td><td>${money(x.currentPrice)}</td><td class="delta ${deltaClass(x.deltaPct)}">${pct(x.deltaPct)}</td><td>${(x.reasons||[]).map(r=>`<span class="status ${r.severity==='high'?'st-defective':r.severity==='medium'?'st-warranty':'st-other'}">${esc(r.type)}</span>`).join(' ')}</td><td>${actionButton('detail',x.recordId,'Detail','info')}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">No priority alerts for current filters.</td></tr>'}
 function renderRecommendations(){const k=S.data.kpi||{},r=[];if((k.priceCoveragePct||0)<.8)r.push({level:'high',title:'Improve yearly price coverage',text:`Current price coverage is ${pct(k.priceCoveragePct)}. Complete missing yearly prices before vendor inflation decisions.`});if((k.expiring90||0)>0)r.push({level:'high',title:'Start renewal action',text:`${k.expiring90} contract records are within the configured expiry window. Prioritize high-value contracts first.`});if((k.warrantyExpiring||0)>0)r.push({level:'medium',title:'Warranty transition review',text:`${k.warrantyExpiring} equipment records are approaching warranty end. Confirm MA coverage and first-year post-warranty price.`});if((k.old8||0)>0)r.push({level:'medium',title:'EOL/EOS replacement planning',text:`${k.old8} equipment records are aged ≥ 8 years. Cross-check EOS/EOL and replacement budget.`});if((k.dataIssues||0)>0)r.push({level:'medium',title:'Close data-quality gaps',text:`${k.dataIssues} records require review. Fix Site, price basis, MA type and contract dates in source sheets.`});if(!r.length)r.push({level:'',title:'Data is in good shape',text:'No major action detected for the current scope and filters.'});$('recommendations').innerHTML=r.slice(0,6).map(x=>`<div class="recommendation ${x.level}"><b>${esc(x.title)}</b><p>${esc(x.text)}</p></div>`).join('')}
 function renderEquipment(){
@@ -269,7 +284,21 @@ function renderContractFiles(){const files=S.files||[];$('contractFiles').innerH
 function openUpload(c){const site=c?.site||$('contractSite').value||S.profile.allowedSites?.[0]||'';fillSelect('uSite',S.bootstrap.filters.sites,'Select Site');fillSelect('uVendor',S.bootstrap.filters.vendors,'Select Vendor');$('uSite').value=site;$('uVendor').value=c?.vendor||$('contractVendor').value||'';$('uContractName').value=c?`${c.site} - ${c.vendor} - ${c.maType||'Contract'} - ${c.startDate||''} to ${c.endDate||''}`:'';$('uContractDate').value=(c?.startDate||new Date().toISOString().slice(0,10)).slice(0,10);$('uRecordId').value=c?.records?.[0]?.recordId||'';$('uHospital').value=c?.hospital||'';$('uGroup').value=c?.group||'';$('uNotes').value='';$('uploadModal').classList.remove('hidden')}
 async function startUpload(e){e.preventDefault();showLoading(true);try{const r=await CESApi.call('createUploadTicket',S.token,{site:$('uSite').value,vendor:$('uVendor').value,contractName:$('uContractName').value,recordId:$('uRecordId').value,hospital:$('uHospital').value,group:$('uGroup').value,contractDate:$('uContractDate').value,notes:$('uNotes').value});$('uploadModal').classList.add('hidden');const w=window.open(r.url,'CESContractUpload','width=720,height=760,resizable=yes,scrollbars=yes');if(!w)throw new Error('Popup blocked. Please allow popups for this site.')}catch(e){handleApiError(e)}finally{showLoading(false)}}
 
-async function loadUsers(){if(!S.profile.canManageAccess)return;showLoading(true);try{S.staff=await CESApi.call('getStaffAccess',S.token);S.staffPage=1;populateUserFilters();renderUserSummary();renderUsers()}catch(e){handleApiError(e)}finally{showLoading(false)}}
+async function loadUsers(){
+  if(!S.profile?.canManageAccess){$('userLoadMessage').textContent='Your role does not allow User Management.';return;}
+  showLoading(true);$('staffCount').textContent='Loading…';$('userLoadMessage').textContent='Reading 06_Staff_Access from the connected Google Sheet…';
+  try{
+    const result=await CESApi.call('getStaffAccess',S.token);
+    if(!Array.isArray(result))throw new Error('Unexpected User Management API response. Update Apps Script to V33 and redeploy.');
+    S.staff=result;S.staffPage=1;populateUserFilters();renderUserSummary();renderUsers();
+    $('userLoadMessage').textContent=result.length?`${result.length} users loaded · source: 06_Staff_Access · permission-scoped results`:'No users returned for your access scope. Check 06_Staff_Access, Allowed_Site and Apps Script deployment.';
+    $('userLoadMessage').classList.toggle('warning',!result.length);
+  }catch(e){
+    $('staffCount').textContent='Load failed';$('staffBody').innerHTML=`<tr><td colspan="9" class="user-load-error"><b>Unable to load users</b><p>${esc(errMsg(e))}</p><button class="secondary compact" onclick="loadUsers()">Retry</button></td></tr>`;
+    $('userLoadMessage').textContent='User Management API failed · '+errMsg(e);$('userLoadMessage').classList.add('warning');
+    handleApiError(e);
+  }finally{showLoading(false)}
+}
 function renderUserSummary(){const total=S.staff.length,active=S.staff.filter(x=>x.isActive).length,pending=S.staff.filter(x=>x.approvalStatus==='Pending').length,edit=S.staff.filter(x=>x.canEditData).length,emails=S.staff.filter(x=>x.email).length;$('roleSummary').innerHTML=`<div class="mini-kpi"><span>Users in scope</span><b>${total}</b></div><div class="mini-kpi"><span>Active</span><b class="good">${active}</b></div><div class="mini-kpi"><span>Edit access</span><b>${edit}</b></div><div class="mini-kpi"><span>Pending approval</span><b class="warning-text">${pending}</b></div>`}
 function populateUserFilters(){const sites=uniq_((S.staff||[]).flatMap(x=>x.allowedSites||String(x.allowedSite||'').split(/[;,]/)).map(x=>String(x).trim()).filter(x=>x&&x!=='*')).sort(),groups=uniq_((S.staff||[]).flatMap(x=>x.allowedGroups||String(x.allowedGroup||'').split(/[;,]/)).map(x=>String(x).trim()).filter(x=>x&&x!=='*')).sort();fillSelect('staffSiteFilter',sites,'All sites');fillSelect('staffGroupFilter',groups,'All groups')}
 function userLocation_(x){if(x.canViewAllSites)return'ALL SITES';const s=(x.allowedSites||String(x.allowedSite||'').split(/[;,]/)).filter(Boolean);return s.length>1?'MULTI • '+s.join(', '):(s[0]||x.profileSite||'UNASSIGNED')}
