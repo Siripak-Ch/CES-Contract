@@ -1,13 +1,37 @@
 window.CESApi=(()=>{
   let seq=0;
-  function execUrl(){const raw=String((window.CES_CONFIG&&window.CES_CONFIG.webAppUrl)||'').trim().replace(/\?.*$/,'').replace(/\/$/,'');if(!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i.test(raw))throw new Error('Apps Script /exec URL in config.js is invalid');return raw;}
-  function isConfigured(){try{execUrl();return true}catch(_){return false}}
+  function diagnostics(){
+    if(!window.CES_CONFIG) return {ok:false, message:'config.js did not load. Publish config.js beside index.html and refresh with Ctrl+F5.'};
+    const value=String(window.CES_CONFIG.webAppUrl||'').trim();
+    if(!value) return {ok:false, message:'Missing webAppUrl in config.js. Paste the active Apps Script deployment /exec URL.'};
+    try{
+      const u=new URL(value);
+      const path=u.pathname.replace(/\/+$/,'');
+      if(u.protocol!=='https:'||u.hostname!=='script.google.com'||!/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(path))
+        return {ok:false,message:'Invalid Web App URL. Expected https://script.google.com/macros/s/DEPLOYMENT_ID/exec (not /dev).'};
+      return {ok:true,url:u.origin+path,message:'Endpoint configured; testing connection…'};
+    }catch(_){return {ok:false,message:'Malformed Apps Script URL in config.js. Check missing quotes, spaces or the URL.'};}
+  }
+  function execUrl(){const result=diagnostics();if(!result.ok)throw new Error(result.message);return result.url;}
+  function isConfigured(){return diagnostics().ok;}
   function encodePayload(value){const bytes=new TextEncoder().encode(JSON.stringify(value||[]));let binary='';for(const b of bytes)binary+=String.fromCharCode(b);return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-  function call(method,...args){return new Promise((resolve,reject)=>{let url;try{url=execUrl()}catch(e){reject(e);return}const cb='CESJSONP_'+Date.now()+'_'+(++seq),script=document.createElement('script'),timeout=Number(window.CES_CONFIG.apiTimeoutMs)||25000;let finished=false,timer;const clean=()=>{if(finished)return;finished=true;clearTimeout(timer);try{delete window[cb]}catch(_){window[cb]=undefined}script.remove()};window[cb]=resp=>{if(finished)return;const ok=resp&&resp.ok,result=resp&&resp.result,error=resp&&resp.error;clean();ok?resolve(result):reject(new Error(error||'Backend error'))};script.onerror=()=>{clean();reject(new Error('Cannot connect to Apps Script. Check /exec deployment and Web App access.'))};const qs=new URLSearchParams({api:'1',method,payload:encodePayload(args),origin:location.origin,callback:cb,_:String(Date.now())});script.src=url+'?'+qs.toString();script.async=true;script.referrerPolicy='no-referrer';timer=setTimeout(()=>{clean();reject(new Error('Apps Script did not respond within '+Math.round(timeout/1000)+' seconds'))},timeout);document.head.appendChild(script);});}
-  return{call,isConfigured,execUrl};
+  function call(method,...args){return new Promise((resolve,reject)=>{
+    let url;try{url=execUrl()}catch(e){reject(e);return;}
+    const cb='CESJSONP_'+Date.now()+'_'+(++seq),script=document.createElement('script');
+    const timeout=Math.max(8000,Math.min(60000,Number(window.CES_CONFIG.apiTimeoutMs)||25000));
+    let finished=false,timer;
+    const clean=()=>{if(finished)return;finished=true;clearTimeout(timer);try{delete window[cb]}catch(_){window[cb]=undefined;}script.remove();};
+    window[cb]=resp=>{if(finished)return;const ok=resp&&resp.ok,result=resp&&resp.result,error=resp&&resp.error;clean();ok?resolve(result):reject(new Error(error||'Backend returned an error.'));};
+    script.onerror=()=>{clean();reject(new Error('Cannot load Apps Script. Verify the deployed /exec URL and Web app access permissions.'));};
+    const qs=new URLSearchParams({api:'1',method,payload:encodePayload(args),origin:location.origin,callback:cb,_:String(Date.now())});
+    script.src=url+'?'+qs.toString();script.async=true;script.referrerPolicy='no-referrer';
+    timer=setTimeout(()=>{clean();reject(new Error('Apps Script connection timed out. Check deployment URL, access permissions and Apps Script execution logs.'));},timeout);
+    document.head.appendChild(script);
+  });}
+  return{call,isConfigured,execUrl,diagnostics};
 })();
 
-const S={token:null,profile:null,bootstrap:null,data:null,settings:null,rows:[],staff:[],contracts:[],contractMeta:null,files:[],notifyConfig:[],page:'dashboard',dataVersion:'0',syncTimer:null,equipmentPage:1,equipmentPageSize:30,contractPage:1,contractPageSize:30,staffPage:1,staffPageSize:30,charts:{trend:null,site:null,status:null,compare:null,yoy:null},activeContractRow:null,selectedEquipment:new Set(),renewals:[],renewalPage:1};
+const S={token:null,profile:null,bootstrap:null,data:null,settings:null,rows:[],staff:[],contracts:[],contractMeta:null,files:[],notifyConfig:[],page:'dashboard',dataVersion:'0',syncTimer:null,equipmentPage:1,equipmentPageSize:30,contractPage:1,contractPageSize:30,staffPage:1,staffPageSize:30,charts:{trend:null,site:null,status:null,compare:null,yoy:null,types:null},activeContractRow:null,selectedEquipment:new Set(),renewals:[],renewalPage:1};
 const VENDOR_COLORS={'MD Healthcare':'#0B5CAD','Carl Zeiss':'#6B7C93','Draeger':'#D94B4B','GE':'#E53935','Getz Healthcare':'#8E6BBE','Olympus':'#1666D3','Philips':'#5E87B8','Siemens':'#0B7A75','Thai GL':'#D88B19','Valor Health':'#9C4A6E','Xovic':'#4F7D3A'};
 const vendorColor=(name,i=0)=>VENDOR_COLORS[name]||['#1666D3','#E53935','#6B7C93','#0B7A75','#D88B19','#8E6BBE','#5E87B8','#9C4A6E','#4F7D3A','#9A6D3A','#334E68'][i%11];
 const $=id=>document.getElementById(id);
@@ -23,6 +47,9 @@ const icon=(name)=>`<svg><use href="#i-${name}"/></svg>`;
 function showLoading(v){$('loading').classList.toggle('hidden',!v)}
 function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');clearTimeout(toast.t);toast.t=setTimeout(()=>$('toast').classList.add('hidden'),3600)}
 function errMsg(e){return(e&&e.message)||String(e)}
+function showLoginConnectionError(message){const area=$('loginError');area.textContent=message;area.classList.remove('hidden');}
+async function testBackendConnection(){const btn=$('testBackendBtn');btn.disabled=true;$('backendStatus').textContent='Testing connection…';try{const r=await CESApi.call('health');$('backendStatus').textContent='Connected • '+(r.version||'Backend ready');$('loginError').classList.add('hidden');}catch(e){const m=errMsg(e);$('backendStatus').textContent='Connection check failed';showLoginConnectionError(/RPC method not allowed/.test(m)?'Backend is reachable but not updated to V32. Redeploy Apps Script as a new version.':m);}finally{btn.disabled=false;}}
+function clearSessionOnExpiry(reason){clearInterval(S.syncTimer);S.token=null;S.profile=null;sessionStorage.removeItem('ces_token');$('appView')?.classList.add('hidden');$('loginView')?.classList.remove('hidden');showLoginConnectionError(reason||'Session expired. Please sign in again.');setSyncState('Signed out','Session ended','red');}
 function statusClass(s){s=String(s||'').toLowerCase();return s==='active'?'st-active':s==='defective'?'st-defective':s==='decommission'?'st-decommission':s==='warranty'?'st-warranty':'st-other'}
 function deltaClass(v){return v===null||v===undefined?'flat':Number(v)>0?'up':Number(v)<0?'down':'flat'}
 function initialOf(name){const x=String(name||'U').trim();return x?x.charAt(0).toUpperCase():'U'}
@@ -35,11 +62,15 @@ function actionButton(action,id,title,iconName){return `<button class="action-bt
 
 async function boot(){
   bindEvents();$('signInBtn').disabled=false;
-  if(!CESApi.isConfigured()){$('backendStatus').textContent='Backend URL missing in config.js';return;}
-  $('backendStatus').textContent='Staff ID only • no PIN';
+  const diagnostic=CESApi.diagnostics();
+  if(!diagnostic.ok){$('backendStatus').textContent='Connection setup required';showLoginConnectionError(diagnostic.message);return;}
+  $('backendStatus').textContent='Checking Apps Script connection…';
+  try{const health=await CESApi.call('health');$('backendStatus').textContent=health?.online?'Apps Script connected • '+(health.version||'ready'):'Apps Script responded';}
+  catch(e){const msg=errMsg(e);const isLegacy=/RPC method not allowed/i.test(msg);$('backendStatus').textContent=isLegacy?'Backend needs V32 deployment':'Backend connection needs checking';showLoginConnectionError(isLegacy?'The URL responds, but the Apps Script version is old. Deploy Code.gs V32 as a new Web App version.':msg);}
+
   const tok=sessionStorage.getItem('ces_token');if(!tok)return;
   try{S.token=tok;showLoading(true);await loadBootstrap(true);showApp();await loadDashboard();startAutoSync()}
-  catch(e){sessionStorage.removeItem('ces_token');S.token=null;console.warn(errMsg(e))}
+  catch(e){sessionStorage.removeItem('ces_token');S.token=null;console.warn(errMsg(e));$('appView')?.classList.add('hidden');$('loginView')?.classList.remove('hidden');showLoginConnectionError(/session/i.test(errMsg(e))?'Session expired. Please sign in again.':errMsg(e));}
   finally{showLoading(false)}
 }
 function bindEvents(){
@@ -49,6 +80,7 @@ function bindEvents(){
   $('aSiteSelectAll').onclick=()=>sitePickerBulk('aSiteChoices',true,'aSiteCount');$('aSiteClear').onclick=()=>sitePickerBulk('aSiteChoices',false,'aSiteCount');
   $('rSiteChoices').addEventListener('change',()=>sitePickerCount('rSiteChoices','rSiteCount'));
   $('aSiteChoices').addEventListener('change',syncUserPrimarySite);$('aProfileSite').addEventListener('change',()=>{$('aProfileGroup').value=(S.bootstrap?.siteDetails||[]).find(x=>x.site===$('aProfileSite').value)?.group||'';});
+  $('testBackendBtn').onclick=testBackendConnection;
   $('loginForm').addEventListener('submit',login);$('registerBtn').onclick=openRegister;$('registerForm').addEventListener('submit',submitRegister);$('logoutBtn').onclick=logout;$('viewProfileBtn').onclick=openProfile;$('profileForm').addEventListener('submit',saveProfile);
   document.querySelectorAll('.nav-btn[data-page]').forEach(b=>b.onclick=()=>switchPage(b.dataset.page));
   $('mobileMenuBtn').onclick=toggleSidebar;
@@ -75,7 +107,7 @@ async function openRegister(){try{
  }catch(e){$('loginError').textContent=errMsg(e);$('loginError').classList.remove('hidden')}}
 
 async function submitRegister(e){e.preventDefault();const sites=[...$('rSiteChoices').querySelectorAll('input:checked')].map(x=>x.value);if(!sites.length){$('registerStatus').textContent='Please select at least one Site.';return;}$('registerStatus').textContent='Submitting…';try{const r=await CESApi.call('register',{staffId:$('rStaffId').value.trim(),thName:$('rThName').value.trim(),engName:$('rEngName').value.trim(),email:$('rEmail').value.trim(),position:$('rPosition').value.trim(),telephone:$('rTelephone').value.trim(),role:$('rRole').value,sites:sites,notes:$('rNotes').value.trim()});$('registerStatus').textContent=r.message||'Registration submitted';setTimeout(()=>$('registerModal').classList.add('hidden'),1500)}catch(err){$('registerStatus').textContent=errMsg(err)}}
-async function login(e){e.preventDefault();$('loginError').classList.add('hidden');const staffId=$('staffId').value.trim();if(!staffId)return;try{$('signInBtn').disabled=true;$('signInBtn').textContent='Signing in…';const r=await CESApi.call('login',{staffId});S.token=r.token;S.profile=r.profile;sessionStorage.setItem('ces_token',S.token);showApp();showLoading(true);await loadBootstrap(false);await loadDashboard();startAutoSync();toast('Sign in successful')}catch(err){let m=errMsg(err);if(/did not respond|Cannot connect/i.test(m))m='Cannot reach Apps Script Web App. Open the /exec URL once, confirm Web App access, then Deploy > New version.';$('loginError').textContent=m;$('loginError').classList.remove('hidden')}finally{$('signInBtn').disabled=false;$('signInBtn').textContent='Sign in';showLoading(false)}}
+async function login(e){e.preventDefault();$('loginError').classList.add('hidden');const staffId=$('staffId').value.trim();if(!staffId)return;try{$('signInBtn').disabled=true;$('signInBtn').textContent='Signing in…';const r=await CESApi.call('login',{staffId});S.token=r.token;S.profile=r.profile;sessionStorage.setItem('ces_token',S.token);showApp();showLoading(true);await loadBootstrap(false);await loadDashboard();startAutoSync();toast('Sign in successful')}catch(err){let m=errMsg(err);if(/timed out|Cannot load/i.test(m))m='Apps Script connection failed. Check config.js /exec deployment, permissions, then redeploy Apps Script as a new version.';if(/session/i.test(m)){S.token=null;sessionStorage.removeItem('ces_token');}$('appView').classList.add('hidden');$('loginView').classList.remove('hidden');showLoginConnectionError(m)}finally{$('signInBtn').disabled=false;$('signInBtn').textContent='Sign in';showLoading(false)}}
 function showApp(){$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');if(localStorage.getItem('ces_sidebar')==='hidden'&&innerWidth>860)$('sidebar').classList.add('hidden-nav')}
 async function logout(){try{if(S.token)await CESApi.call('logout',S.token)}catch(_){}clearInterval(S.syncTimer);sessionStorage.removeItem('ces_token');location.reload()}
 function toggleSidebar(){const sb=$('sidebar');if(innerWidth<=860){sb.classList.toggle('mobile-open');return}const h=sb.classList.toggle('hidden-nav');localStorage.setItem('ces_sidebar',h?'hidden':'open')}
@@ -90,22 +122,75 @@ async function loadDashboardSafe(){try{await loadDashboard()}catch(e){handleApiE
 async function loadDashboard(){const first=!S.data;if(first)showLoading(true);try{S.data=await CESApi.call('dashboard',S.token,getFilterState());S.rows=S.data.rows||[];S.equipmentPage=S.data.page||1;S.dataVersion=String(S.data.dataVersion);renderDashboard();renderEquipment();$('activeFilterCount').textContent=activeFilterCount()+' active';updateAlertCount()}finally{if(first)showLoading(false)}}
 function updateAlertCount(){const upcoming=S.bootstrap?.renewalStats?.due90||0;const other=(S.data?.priorityActions||[]).filter(x=>!(x.reasons||[]).some(q=>q.type==='Contract expiring')).length;const n=upcoming+other;$('notificationCount').textContent=n>99?'99+':n;$('notificationCount').title=`${upcoming} equipment due to renew in 90 days • ${other} other priority alerts`;$('notificationCount').classList.toggle('hidden',!n)}
 function renderDashboard(){const d=S.data,k=d.kpi||{};$('kEquip').textContent=(k.equipment||0).toLocaleString();$('kScope').textContent=`${k.sites||0} sites • ${k.vendors||0} vendors`;$('kCurLabel').textContent=`Contract value ${d.year}`;$('kCur').textContent=money(k.currentTotal);$('kYoyLabel').textContent=`Selected period ${d.compareYear} → ${d.year}`;$('kYoy').textContent=pct(k.yoy);$('kYoy').className=deltaClass(k.yoy);$('kYoySub').textContent=`${k.comparableRecords||0} paired records • ${(d.compareYear===d.year-1)?'YoY':'custom baseline'}`;$('kCoverage').textContent=pct(k.priceCoveragePct);$('kCoverageSub').textContent=`${k.pricedRecords||0}/${k.totalRecords||0} priced`;$('kRiskValue').textContent=money(k.contractAtRisk);$('kIssues').textContent=(k.dataIssues||0).toLocaleString();$('aDefective').textContent=k.defective||0;$('aOld').textContent=k.old8||0;$('aWarranty').textContent=k.warrantyExpiring||0;$('aExpiry').textContent=k.expiring90||0;$('aMissing').textContent=k.missingCurrent||0;renderCharts();renderVendorMovement();renderPriority();renderRecommendations();}
+function chartDataEmpty(id,message){
+  const canvas=$(id);if(!canvas)return;
+  const wrap=canvas.closest('.chart-wrap');if(!wrap)return;
+  let empty=wrap.querySelector('.chart-empty');if(!empty){empty=document.createElement('div');empty.className='chart-empty';wrap.appendChild(empty);}
+  const valid=!!message;canvas.style.display=valid?'none':'';empty.style.display=valid?'flex':'none';empty.textContent=message||'';
+}
+function fmtCompactBaht(v){
+  const n=Number(v);if(!Number.isFinite(n))return '—';
+  const a=Math.abs(n);return '฿'+(a>=1e9?(n/1e9).toLocaleString('en-US',{maximumFractionDigits:2})+'B':a>=1e6?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:1})+'M':a>=1e3?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:0})+'K':n.toLocaleString('en-US',{maximumFractionDigits:0}));
+}
+const CHART_STATUS_COLORS={'Active':'#138b76','Defective':'#e15957','Warranty':'#f4ae45','Decommission':'#7a889b','Non-Renewal':'#8e6bd1','Plan to Replace':'#3279c8','EOS/EOL':'#c17e2d','Other':'#c5cfda'};
+function chartOptions(legend=true,type='money',direction='vertical'){
+  const moneyChart=type==='money', horizontal=direction==='horizontal';
+  const axis={grid:{color:'#e9edf4',drawTicks:false},border:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b',padding:9,maxRotation:0,autoSkip:true}};
+  return{
+    responsive:true,maintainAspectRatio:false,indexAxis:horizontal?'y':'x',interaction:{mode:'nearest',intersect:false},animation:{duration:350},
+    plugins:{legend:{display:legend,position:'bottom',align:'start',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:8,boxHeight:8,padding:13,color:'#475569',font:{family:'Prompt',size:10}}},tooltip:{displayColors:true,backgroundColor:'#132a48',padding:11,titleFont:{family:'Prompt',size:11,weight:'600'},bodyFont:{family:'Prompt',size:10},callbacks:{label:c=>`${c.dataset.label||''}: ${moneyChart?money(c.parsed[horizontal?'x':'y']):num(c.parsed[horizontal?'x':'y'])}`}}},
+    scales:horizontal?{x:{...axis,beginAtZero:true,ticks:{...axis.ticks,callback:v=>moneyChart?fmtCompactBaht(v):new Intl.NumberFormat('en-US').format(v)}},y:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false}}}:
+      {x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:moneyChart,ticks:{...axis.ticks,callback:v=>moneyChart?fmtCompactBaht(v):new Intl.NumberFormat('en-US').format(v)}}}
+  };
+}
 function renderCharts(){
-  const d=S.data;if(typeof Chart==='undefined')return;
-  Object.values(S.charts).forEach(c=>{if(c&&typeof c.destroy==='function')c.destroy()});
-  const years=S.bootstrap.years,top=(d.trend||[]).sort((a,b)=>(b.byYear[d.year]||0)-(a.byYear[d.year]||0)).slice(0,8);
-  S.charts.trend=new Chart($('trendChart'),{type:'line',data:{labels:years,datasets:top.map((v,i)=>({label:v.vendor,data:years.map(y=>v.byYear[y]||null),borderColor:vendorColor(v.vendor,i),backgroundColor:'transparent',tension:.34,spanGaps:true,pointRadius:3,pointHoverRadius:5,borderWidth:2.4}))},options:chartOptions(true)});
-  const sites=(d.siteValues||[]).slice(0,10);
-  S.charts.site=new Chart($('siteChart'),{type:'bar',data:{labels:sites.map(x=>x.site),datasets:[{label:'Contract value',data:sites.map(x=>x.value),backgroundColor:'#1666D3',borderRadius:5}]},options:chartOptions(false)});
-  const yearly=d.yearlyYoy||[];
-  if(S.charts.yoy)S.charts.yoy.destroy();
-  S.charts.yoy=new Chart($('yoyChart'),{type:'bar',data:{labels:yearly.map(x=>`${x.previousYear} → ${x.year}`),datasets:[{label:'Year-over-year %',data:yearly.map(x=>x.changePct===null?null:x.changePct*100),backgroundColor:yearly.map(x=>x.changePct===null?'#cbd5e1':x.changePct>0?'#de5250':'#12936a'),borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${Number(c.raw).toFixed(1)}% • ${yearly[c.dataIndex]?.records||0} matched assets`}}},scales:{y:{ticks:{callback:v=>v+'%'},grid:{color:'#e8edf5'}},x:{grid:{display:false}}}}});
-  $('yoyBreakdown').innerHTML=yearly.map(x=>`<div class="annual-stat"><b>${x.previousYear} → ${x.year}</b><span class="delta ${deltaClass(x.changePct)}">${pct(x.changePct)}</span><small>${x.records} paired • ${money(x.previousValue)} → ${money(x.currentValue)}</small></div>`).join('');
-  const vs=(d.vendorStatusCounts||[]).slice(0,11);
-  S.charts.status=new Chart($('statusChart'),{type:'bar',data:{labels:vs.map(x=>x.vendor),datasets:[{label:'Equipment',data:vs.map(x=>x.total),backgroundColor:vs.map((x,i)=>vendorColor(x.vendor,i)),borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{afterLabel:c=>{const x=vs[c.dataIndex]||{},st=x.statuses||{};return Object.keys(st).sort().map(k=>`${k}: ${st[k]}`).join(' • ')}}}},scales:{x:{beginAtZero:true,grid:{color:'#edf1f6'},ticks:{font:{family:'Prompt',size:9}}},y:{grid:{display:false},ticks:{font:{family:'Prompt',size:9}}}}}});
+  const d=S.data||{},years=S.bootstrap?.years||[];
+  Object.values(S.charts).forEach(c=>{if(c&&typeof c.destroy==='function')c.destroy();});
+  Object.keys(S.charts).forEach(k=>S.charts[k]=null);
+  if(typeof Chart==='undefined'){
+    ['trendChart','siteChart','yoyChart','statusChart','equipmentTypeChart'].forEach(id=>chartDataEmpty(id,'Unable to load chart library. Check CDN access or refresh the page.'));
+    return;
+  }
+  Chart.defaults.font.family='Prompt';Chart.defaults.color='#566983';
+  const trend=(d.trend||[]).slice().sort((a,b)=>(Number(b.byYear?.[d.year])||0)-(Number(a.byYear?.[d.year])||0));
+  chartDataEmpty('trendChart',!trend.length?'No vendor price data for these filters.':'');
+  $('trendMeta').textContent=`${trend.length} vendors • ${years[0]||'—'}–${years[years.length-1]||'—'} • Annual sum of available priced equipment (THB)`;
+  if(trend.length){
+    S.charts.trend=new Chart($('trendChart'),{type:'line',data:{labels:years,datasets:trend.map((v,i)=>({label:v.vendor,data:years.map(y=>v.byYear?.[y]??null),borderColor:vendorColor(v.vendor,i),backgroundColor:vendorColor(v.vendor,i),tension:.2,spanGaps:false,pointRadius:2,pointHoverRadius:5,borderWidth:2}))},options:chartOptions(true)});
+  }
+  const siteValues=(d.siteValues||[]).slice().sort((a,b)=>b.value-a.value),mainSites=siteValues.slice(0,10),remaining=siteValues.slice(10),otherValue=remaining.reduce((s,x)=>s+(Number(x.value)||0),0);
+  const sites=mainSites.concat(remaining.length?[{site:`Other ${remaining.length} sites`,value:otherValue}]:[]);
+  $('siteMeta').textContent=`${siteValues.length} sites • ${d.year} values • Top ${mainSites.length}${remaining.length?' + other sites':''} • THB`;
+  chartDataEmpty('siteChart',!sites.length?'No site-level price data for these filters.':'');
+  if(sites.length){
+    S.charts.site=new Chart($('siteChart'),{type:'bar',data:{labels:sites.map(x=>x.site),datasets:[{label:`Contract value ${d.year}`,data:sites.map(x=>Number(x.value)||0),backgroundColor:sites.map((_,i)=>i===sites.length-1&&remaining.length?'#aabbd1':i===0?'#145db7':'#7da9e2'),borderRadius:5,barPercentage:.76}]},options:{...chartOptions(false,'money','horizontal'),plugins:{...chartOptions(false,'money','horizontal').plugins,tooltip:{callbacks:{label:c=>`Contract value: ${money(c.parsed.x)}`,afterLabel:c=>remaining.length&&c.dataIndex===sites.length-1?`${remaining.length} additional sites`:''}}}}});
+  }
+  const yearly=(d.yearlyYoy||[]).slice();
+  chartDataEmpty('yoyChart',!yearly.some(x=>x.changePct!==null)?'No year-pair prices with a positive prior-year baseline.':'');
+  $('yoyMeta').textContent='(Current − previous) ÷ previous • matched equipment only • 0 previous-year prices excluded';
+  if(yearly.some(x=>x.changePct!==null)){
+    S.charts.yoy=new Chart($('yoyChart'),{type:'bar',data:{labels:yearly.map(x=>`${x.previousYear} → ${x.year}`),datasets:[{label:'YoY change',data:yearly.map(x=>x.changePct==null?null:x.changePct*100),backgroundColor:yearly.map(x=>x.changePct==null?'#cbd5e1':x.changePct>0?'#db575c':x.changePct<0?'#0c9b77':'#7fa3cc'),borderRadius:5,maxBarThickness:45}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'#132a48',padding:12,callbacks:{title:items=>items[0]?.label||'',label:c=>c.raw===null?'No comparable data':`Change: ${Number(c.raw).toFixed(2)}%`,afterLabel:c=>{const x=yearly[c.dataIndex];return [`Matched equipment: ${Number(x?.records||0).toLocaleString()}`,`Previous: ${money(x?.previousValue)}`,`Current: ${money(x?.currentValue)}`];}}}},scales:{x:{grid:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b'}},y:{grid:{color:'#e8edf4'},border:{display:false},ticks:{font:{family:'Prompt',size:10},color:'#64748b',callback:v=>v+'%'}}}}});
+  }
+  $('yoyBreakdown').innerHTML=yearly.map(x=>`<div class="annual-stat ${x.year===d.year?'selected-year':''}"><b>${x.previousYear} → ${x.year}</b><span class="delta ${deltaClass(x.changePct)}">${pct(x.changePct)}</span><small>${num(x.records)} matched records</small><small>${fmtCompactBaht(x.previousValue)} → ${fmtCompactBaht(x.currentValue)}</small></div>`).join('')||'<p class="chart-note">No annual paired values available.</p>';
+  const vs=(d.vendorStatusCounts||[]).slice().sort((a,b)=>b.total-a.total),statusNames=uniq_(vs.flatMap(x=>Object.keys(x.statuses||{}))).sort((a,b)=> (a==='Active'?-1:b==='Active'?1:a.localeCompare(b)));
+  $('statusMeta').textContent=`${vs.length} vendors • ${vs.reduce((s,x)=>s+(x.total||0),0).toLocaleString()} equipment • Stacked by actual status`;
+  chartDataEmpty('statusChart',!vs.length?'No equipment status data for these filters.':'');
+  if(vs.length){
+    const options=chartOptions(true,'count','horizontal');options.indexAxis='y';options.scales.x.stacked=true;options.scales.y.stacked=true;options.plugins.tooltip.callbacks.label=c=>`${c.dataset.label}: ${Number(c.parsed.x||0).toLocaleString()} equipment`;
+    options.plugins.tooltip.callbacks.footer=items=>`Total: ${num(vs[items[0]?.dataIndex]?.total||0)}`;
+    S.charts.status=new Chart($('statusChart'),{type:'bar',data:{labels:vs.map(x=>x.vendor),datasets:statusNames.map((s,i)=>({label:s,data:vs.map(x=>Number((x.statuses||{})[s]||0)),backgroundColor:CHART_STATUS_COLORS[s]||['#768fae','#a98dce','#d6aa63'][i%3],borderRadius:2}))},options});
+  }
+  const types=(d.equipmentTypeValues||[]).slice().sort((a,b)=>b.count-a.count);
+  const topTypes=types.slice(0,11),remainingTypes=types.slice(11),otherTypesCount=remainingTypes.reduce((s,x)=>s+(Number(x.count)||0),0);
+  const shownTypes=topTypes.concat(remainingTypes.length?[{type:`Other ${remainingTypes.length} types`,count:otherTypesCount}]:[]);
+  $('typeMeta').textContent=`${types.length} equipment types • ${types.reduce((s,x)=>s+(x.count||0),0).toLocaleString()} equipment • Counts, not prices`;
+  chartDataEmpty('equipmentTypeChart',!shownTypes.length?'No Equipment_Type data. Run CES_SETUP and refresh.':'');
+  if(shownTypes.length){
+    const opt=chartOptions(false,'count','horizontal');opt.indexAxis='y';opt.plugins.tooltip.callbacks.label=c=>`${num(c.parsed.x)} equipment`;
+    S.charts.types=new Chart($('equipmentTypeChart'),{type:'bar',data:{labels:shownTypes.map(x=>x.type),datasets:[{label:'Equipment',data:shownTypes.map(x=>x.count),backgroundColor:shownTypes.map((x,i)=>i===0?'#145db7':i===shownTypes.length-1&&remainingTypes.length?'#9fb2c7':'#67a5be'),borderRadius:4,barPercentage:.72}]},options:opt});
+  }
 }
 
-function chartOptions(legend){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:legend,position:'bottom',labels:{usePointStyle:true,font:{family:'Prompt',size:10}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${money(c.raw)}`}}},scales:{x:{grid:{display:false},ticks:{font:{family:'Prompt',size:9}}},y:{beginAtZero:false,grid:{color:'#edf1f6'},ticks:{font:{family:'Prompt',size:9},callback:v=>new Intl.NumberFormat('en',{notation:'compact'}).format(v)}}}}}
 function renderVendorMovement(){const rows=(S.data.vendorComparison||[]).slice(0,12);$('vendorMovement').innerHTML=rows.map(x=>`<div class="rank-row"><b>${esc(x.vendor)}</b><span class="value">${money(x.currentValue)}</span><span class="delta ${deltaClass(x.deltaPct)}">${pct(x.deltaPct)}</span><button class="action-btn" data-vendor="${esc(x.vendor)}" title="Compare vendor">${icon('compare')}</button></div>`).join('')||'<div class="muted">No comparable vendor data.</div>'}
 function renderPriority(){const rows=S.data.priorityActions||[];$('priorityBody').innerHTML=rows.map(x=>`<tr><td><b>${esc(x.site)}</b></td><td>${esc(x.vendor)}</td><td>${esc(x.equipment)}<br><small class="muted">${esc(x.model)}</small></td><td>${esc(x.nhCode)}</td><td>${money(x.currentPrice)}</td><td class="delta ${deltaClass(x.deltaPct)}">${pct(x.deltaPct)}</td><td>${(x.reasons||[]).map(r=>`<span class="status ${r.severity==='high'?'st-defective':r.severity==='medium'?'st-warranty':'st-other'}">${esc(r.type)}</span>`).join(' ')}</td><td>${actionButton('detail',x.recordId,'Detail','info')}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">No priority alerts for current filters.</td></tr>'}
 function renderRecommendations(){const k=S.data.kpi||{},r=[];if((k.priceCoveragePct||0)<.8)r.push({level:'high',title:'Improve yearly price coverage',text:`Current price coverage is ${pct(k.priceCoveragePct)}. Complete missing yearly prices before vendor inflation decisions.`});if((k.expiring90||0)>0)r.push({level:'high',title:'Start renewal action',text:`${k.expiring90} contract records are within the configured expiry window. Prioritize high-value contracts first.`});if((k.warrantyExpiring||0)>0)r.push({level:'medium',title:'Warranty transition review',text:`${k.warrantyExpiring} equipment records are approaching warranty end. Confirm MA coverage and first-year post-warranty price.`});if((k.old8||0)>0)r.push({level:'medium',title:'EOL/EOS replacement planning',text:`${k.old8} equipment records are aged ≥ 8 years. Cross-check EOS/EOL and replacement budget.`});if((k.dataIssues||0)>0)r.push({level:'medium',title:'Close data-quality gaps',text:`${k.dataIssues} records require review. Fix Site, price basis, MA type and contract dates in source sheets.`});if(!r.length)r.push({level:'',title:'Data is in good shape',text:'No major action detected for the current scope and filters.'});$('recommendations').innerHTML=r.slice(0,6).map(x=>`<div class="recommendation ${x.level}"><b>${esc(x.title)}</b><p>${esc(x.text)}</p></div>`).join('')}
@@ -284,6 +369,6 @@ function switchPage(page){if(page==='users'&&!S.profile.canManageAccess)return;S
 async function refreshAll(){showLoading(true);try{await loadBootstrap(true);await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();toast('Data synchronized')}catch(e){handleApiError(e)}finally{showLoading(false)}}
 function getSyncSec(){const n=Number(localStorage.getItem('ces_sync_sec')||S.bootstrap?.defaults?.autoSyncSec||10);return[5,10,15,30,60,120].includes(n)?n:10}
 function startAutoSync(){clearInterval(S.syncTimer);const sec=getSyncSec();setSyncState('Live sync',`Every ${sec} sec`,'green');S.syncTimer=setInterval(()=>{if(!document.hidden)checkSync(false)},sec*1000)}
-async function checkSync(force){if(!S.token)return;setSyncState('Checking…','Google Sheet','orange');try{const r=await CESApi.call('syncStatus',S.token,S.dataVersion);S.profile=r.profile||S.profile;updateProfileUi();$('userNav').classList.toggle('hidden',!S.profile.canManageAccess);if(r.changed){S.dataVersion=String(r.dataVersion);await loadBootstrap(true);await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();toast('Sheet changed • synchronized')}setSyncState('Live sync',`Every ${getSyncSec()} sec`,'green')}catch(e){const m=errMsg(e);setSyncState('Sync issue','Click sync','red');if(force)toast(m);console.warn('CES sync error',m)}}
-function handleApiError(e){let msg=errMsg(e);if(/RPC method not allowed/i.test(msg))msg='Apps Script backend is older than the GitHub front end. Deploy the latest Apps Script code as a NEW VERSION, then refresh this page.';if(/session/i.test(msg)){sessionStorage.removeItem('ces_token');alert(msg);location.reload();return}toast(msg)}
+async function checkSync(force){if(!S.token)return;setSyncState('Checking…','Google Sheet','orange');try{const r=await CESApi.call('syncStatus',S.token,S.dataVersion);S.profile=r.profile||S.profile;updateProfileUi();$('userNav').classList.toggle('hidden',!S.profile.canManageAccess);if(r.changed){S.dataVersion=String(r.dataVersion);await loadBootstrap(true);await loadDashboard();if(S.page==='contracts')await loadSiteContracts();if(S.page==='users')await loadUsers();if(S.page==='settings')await loadSettings();toast('Sheet changed • synchronized')}setSyncState('Live sync',`Every ${getSyncSec()} sec`,'green')}catch(e){const m=errMsg(e);setSyncState('Sync issue','Click sync','red');if(/session expired|invalid session|session not found|session expired|session invalid/i.test(m)){clearSessionOnExpiry('Session expired. Please sign in again.');return;}if(force)toast(m);console.warn('CES sync error',m)}}
+function handleApiError(e){let msg=errMsg(e);if(/RPC method not allowed/i.test(msg))msg='Apps Script backend is older than the GitHub front end. Deploy the latest Apps Script code as a NEW VERSION, then refresh this page.';if(/session expired|invalid session|session not found|session invalid/i.test(msg)){clearSessionOnExpiry('Session expired. Please sign in again.');return}toast(msg)}
 boot();
